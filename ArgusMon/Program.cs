@@ -7,7 +7,7 @@ class Program
 {
     static void Main(string[] args)
     {
-        var daemon = new SerialDaemon("/dev/arduino", 57600);
+        var daemon = new SerialDaemon("/dev/ttyUSB0", 57600);
 
         // Signal für sauberes Beenden
         AssemblyLoadContext.Default.Unloading += ctx => daemon.Stop();

@@ -6,24 +6,19 @@ using System.Runtime.InteropServices;
 
 namespace ArgusMon;
 
-public class SerialDaemon
+public class SerialDaemon(string device, int baudRate)
 {
     private SerialPort _port;
-    private readonly string _device;
-    private readonly int _baudRate;
     private Thread _workerThread;
     private volatile bool _running = true;
 
-    public SerialDaemon(string device, int baudRate)
-    {
-        _device = device;
-        _baudRate = baudRate;
-    }
-
     public void Start()
     {
-        _workerThread = new Thread(Worker);
-        _workerThread.IsBackground = true;
+        _workerThread = new Thread(Worker)
+        {
+            IsBackground = true
+        };
+        
         _workerThread.Start();
     }
 
@@ -44,9 +39,9 @@ public class SerialDaemon
                 while (_running && _port.IsOpen)
                 {
                     // (1) Sende Anfrage
-                    byte[] request = new byte[] { 0xAA, 0x02, 0x20 };
-                    byte crc = CalculateCRC8(request);
-                    byte[] fullRequest = new byte[4];
+                    var request = new byte[] { 0xAA, 0x02, 0x20 };
+                    var crc = CalculateCrc8(request);
+                    var fullRequest = new byte[4];
                     Array.Copy(request, fullRequest, 3);
                     fullRequest[3] = crc;
 
@@ -54,15 +49,15 @@ public class SerialDaemon
 
                     // (2) Lese Antwort (mit Timeout)
                     Thread.Sleep(100); // kurze Wartezeit
-                    byte[] buffer = new byte[256];
-                    int len = _port.Read(buffer, 0, buffer.Length);
+                    var buffer = new byte[256];
+                    var len = _port.Read(buffer, 0, buffer.Length);
                     if (len > 0)
                     {
                         ProcessPacket(buffer, len);
                     }
 
                     // (3) Warte 10 Sekunden
-                    for (int i = 0; i < 10 && _running; i++)
+                    for (var i = 0; i < 10 && _running; i++)
                         Thread.Sleep(1000);
                 }
             }
@@ -76,36 +71,36 @@ public class SerialDaemon
 
     private void Connect()
     {
-        if (_port != null && _port.IsOpen)
+        if (_port is { IsOpen: true })
         {
             _port.Close();
         }
 
-        _port = new SerialPort(_device, _baudRate, Parity.None, 8, StopBits.One)
+        _port = new SerialPort(device, baudRate, Parity.None, 8, StopBits.One)
         {
             ReadTimeout = 2000,
             WriteTimeout = 2000
         };
 
         _port.Open();
-        Log($"[INFO] Port {_device} geöffnet.");
+        Log($"[INFO] Port {device} geöffnet.");
         Thread.Sleep(2000); // Geräte-Reset-Zeit
     }
 
     private void ProcessPacket(byte[] buffer, int length)
     {
-        if (length < 6)
+        if (length < 13)
         {
             Log("[WARN] Paket zu kurz");
             return;
         }
 
-        byte receivedCRC = buffer[length - 1];
-        byte calculatedCRC = CalculateCRC8(buffer[..(length - 1)]);
-
-        if (receivedCRC != calculatedCRC)
+        var receivedCrc = buffer[12];
+        var calculatedCrc = CalculateCrc8(buffer.AsSpan(0, 12)); // Bytes 0 bis 11
+        
+        if (receivedCrc != calculatedCrc)
         {
-            Log($"[WARN] CRC Fehler: empfangen 0x{receivedCRC:X2}, erwartet 0x{calculatedCRC:X2}");
+            Log($"[WARN] CRC Fehler: empfangen 0x{receivedCrc:X2}, erwartet 0x{calculatedCrc:X2}");
             return;
         }
 
@@ -115,14 +110,28 @@ public class SerialDaemon
             return;
         }
 
-        ushort temp = (ushort)((buffer[4] << 8) | buffer[5]);
-        int tempTimes100 = temp * 100;
+        int tempCount = buffer[3]; // Sollte 4 sein
+        if (tempCount != 4)
+        {
+            Log($"[WARN] Unerwartete TEMP_COUNT: {tempCount}");
+            return;
+        }
+        
+        var temp0 = (ushort)((buffer[4] << 8) | buffer[5]);
+        // var temp1 = (ushort)((buffer[6] << 8) | buffer[7]);
+        // var temp2 = (ushort)((buffer[8] << 8) | buffer[9]);
+        // var temp3 = (ushort)((buffer[10] << 8) | buffer[11]);
+        
+        var temp0Times100 = temp0 * 100;
+        // int temp1Times100 = temp1 * 100;
+        // int temp2Times100 = temp2 * 100;
+        // int temp3Times100 = temp3 * 100;
 
-        File.WriteAllText("/var/log/argus_temp.out", $"{tempTimes100}\n");
-        Log($"[INFO] Temperatur: {tempTimes100}");
+        File.WriteAllText("/var/tmp/argus_temp.out", $"{temp0Times100}\n");
+        Log($"[INFO] Temperatur: {temp0Times100}");
     }
 
-    private byte CalculateCRC8(ReadOnlySpan<byte> data)
+    private static byte CalculateCrc8(ReadOnlySpan<byte> data)
     {
         byte crc = 0;
         foreach (var b in data)
@@ -134,7 +143,7 @@ public class SerialDaemon
         return crc;
     }
 
-    private void Log(string message)
+    private static void Log(string message)
     {
         Console.WriteLine($"{DateTime.Now:O} {message}");
         // Alternativ mit syslog über native call oder eigene Datei
